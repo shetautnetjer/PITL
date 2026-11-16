@@ -40,10 +40,13 @@
   request expired, askpass printed nothing to stdout and sudo refused. The
   audit log shows `created` then `expired`. Fail-closed path confirmed.
 - Learned: sudo does not call askpass again after an empty answer.
+- Second live `sudo -A -k /usr/bin/id`, answered from a phone over the
+  tailnet: approved 37 seconds after the request, delivered once, and sudo ran
+  `id` as root (exit 0). Audit: `created`, `authorized` (with the phone's
+  Tailscale login and tailnet address, marked unverified), `consumed`.
 
 ### Not done yet
 
-- A live run where the password is approved from the phone end to end.
 - Phone pairing (QR) and passkey approval: 0.2.
 - Push notification to the phone: the link is printed to the agent (stderr)
   and listed by `pitl list`.
