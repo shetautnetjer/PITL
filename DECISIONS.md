@@ -89,3 +89,19 @@ The wrapper passes the token to `op` through `OP_SERVICE_ACCOUNT_TOKEN` at run
 time. It has its own name so that installing it doesn't change what `op`
 means for everything else on the machine (or depend on PATH order). It
 refuses a token file that isn't 0600 or 0400.
+
+## D15. op.env files hold references only, and the runner enforces it
+
+Programs get secrets through `pitl-op run --env-file`, with one op.env per
+program in `~/.config/op-env` (0700/0600). The files hold `NAME=op://...`
+lines only. `pitl-op-env add` checks a reference resolves (discarding the
+value) before writing it, and `pitl-op-env run` refuses a file with any other
+kind of line, so a value can't end up on disk by mistake. References use ids
+because env files can't hold spaces.
+
+## D16. `pitl-op run` withholds the service account token from the program
+
+`pitl-op` inserts `env -u OP_SERVICE_ACCOUNT_TOKEN` after `--`, so the
+program receives only the values its op.env names, not the key to the whole
+service account. A program that genuinely needs 1Password access can still
+call `pitl-op` itself.

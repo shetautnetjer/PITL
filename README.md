@@ -111,6 +111,12 @@ install -m 0755 contrib/pitl-op ~/.local/bin/
 pitl-op vault list
 ```
 
+To give programs 1Password secrets without writing values anywhere, use the
+**op.env convention**: each program has `~/.config/op-env/<program>.op.env`
+holding only `op://` references, added once with `pitl-op-env add`, and is
+always started with `pitl-op-env run <program> -- <command>`. See
+[docs/OP-ENV.md](docs/OP-ENV.md).
+
 > **Every program running as your user can read a stored secret**, including
 > every agent. Store only what you are willing to give all of them. See
 > [the security notes](docs/SECURITY.md#stored-secrets-pitl-store-are-readable-by-every-agent-of-that-user).
@@ -130,6 +136,7 @@ pitl-op vault list
 - [Threat model](docs/THREAT-MODEL.md)
 - [Protocol](docs/PROTOCOL.md)
 - [Security policy](docs/SECURITY.md)
+- [Using 1Password secrets in programs (op.env)](docs/OP-ENV.md)
 - [Status](STATUS.md) and [decisions](DECISIONS.md)
 - [Notes for agents working on this repo](AGENTS.md)
 

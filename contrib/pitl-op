@@ -6,7 +6,9 @@
 #   pitl-op vault list                        # then use pitl-op like op
 #
 # The token is passed to op through the OP_SERVICE_ACCOUNT_TOKEN environment
-# variable of the op process only. It is never printed.
+# variable of the op process only. It is never printed. With `pitl-op run`,
+# the program started after `--` does not receive the token, only the values
+# its env file references (see docs/OP-ENV.md).
 #
 # Settings (environment):
 #   PITL_OP_SECRET   secret name (default: op-service-account)
@@ -42,4 +44,21 @@ if [ -z "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
   exit 1
 fi
 export OP_SERVICE_ACCOUNT_TOKEN
+
+# For `pitl-op run ... -- <command>`, start <command> without the service
+# account token: it gets only the values its op.env asks for. (It can still
+# call pitl-op itself if it needs to.)
+if [ "${1:-}" = "run" ]; then
+  seen=0
+  for arg do
+    shift
+    if [ "$seen" = 0 ] && [ "$arg" = "--" ]; then
+      set -- "$@" -- env -u OP_SERVICE_ACCOUNT_TOKEN
+      seen=1
+    else
+      set -- "$@" "$arg"
+    fi
+  done
+fi
+
 exec "$real_op" "$@"
