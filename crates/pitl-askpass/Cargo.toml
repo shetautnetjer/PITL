@@ -1,0 +1,17 @@
+[package]
+name = "pitl-askpass"
+description = "SUDO_ASKPASS helper that asks pitld, so a human answers from their phone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "pitl-askpass"
+path = "src/main.rs"
+
+[dependencies]
+pitl-core.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
