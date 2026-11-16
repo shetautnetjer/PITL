@@ -21,6 +21,8 @@ Options:
   --socket PATH      Unix socket. Default: $XDG_RUNTIME_DIR/pitl/pitld.sock
   --audit PATH       Audit log. Default: ~/.local/state/pitl/audit.jsonl
   --ttl-secs N       How long a request waits, in seconds (max 600). Default: 180
+  --secrets-dir DIR  Where `pitl store` writes secrets (kept 0700).
+                     Default: ~/.config/pitl/secrets
   -h, --help         Show this help
 ";
 
@@ -31,6 +33,7 @@ fn parse() -> Result<Config, String> {
     let mut audit_path = pitl_core::paths::audit_path();
     let mut ttl = DEFAULT_TTL;
     let mut behind_serve = false;
+    let mut secrets_dir = pitl_core::secrets::default_dir();
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -58,6 +61,7 @@ fn parse() -> Result<Config, String> {
                 }
             }
             "--behind-serve" => behind_serve = true,
+            "--secrets-dir" => secrets_dir = PathBuf::from(val("--secrets-dir")?),
             other => return Err(format!("unknown option: {other}")),
         }
     }
@@ -70,6 +74,7 @@ fn parse() -> Result<Config, String> {
         ttl,
         machine: pitl_core::proc_info::hostname(),
         behind_serve,
+        secrets_dir,
     })
 }
 

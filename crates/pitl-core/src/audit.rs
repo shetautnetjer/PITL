@@ -10,7 +10,12 @@ use crate::state::RequestInfo;
 pub struct AuditRecord<'a> {
     /// RFC 3339 UTC time.
     pub time: String,
-    /// created | authorized | consumed | denied | expired | canceled | failed
+    /// sudo | store
+    pub kind: &'static str,
+    /// For store requests: the secret's name (never its value).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_name: Option<&'a str>,
+    /// created | authorized | consumed | stored | denied | expired | canceled | failed
     pub event: &'a str,
     pub id: String,
     pub machine: &'a str,
@@ -30,6 +35,11 @@ impl<'a> AuditRecord<'a> {
     pub fn new(event: &'a str, id: String, info: &'a RequestInfo) -> Self {
         Self {
             time: crate::timefmt::rfc3339_now(),
+            kind: info.kind.as_str(),
+            secret_name: match &info.kind {
+                crate::state::RequestKind::Store { name, .. } => Some(name.as_str()),
+                crate::state::RequestKind::Sudo => None,
+            },
             event,
             id,
             machine: &info.machine,

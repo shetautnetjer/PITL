@@ -9,13 +9,13 @@ use std::time::Duration;
 use pitl_core::audit::AuditRecord;
 use pitl_core::proc_info;
 use pitl_core::protocol::{ClientMessage, DaemonMessage, MAX_LINE};
-use pitl_core::{ConsumeOutcome, RequestId, RequestInfo, State};
+use pitl_core::{ConsumeOutcome, RequestId, RequestInfo, RequestKind, State};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::unix::OwnedWriteHalf;
+use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{UnixListener, UnixStream};
 use zeroize::Zeroizing;
 
-use crate::App;
+use crate::{secret_store, App};
 
 /// Create the socket: parent directory 0700, socket 0600, stale socket removed.
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
@@ -61,6 +61,16 @@ async fn send(w: &mut OwnedWriteHalf, msg: &DaemonMessage) -> std::io::Result<()
     w.flush().await
 }
 
+async fn refuse(w: &mut OwnedWriteHalf, message: &str) -> std::io::Result<()> {
+    send(
+        w,
+        &DaemonMessage::Error {
+            message: message.into(),
+        },
+    )
+    .await
+}
+
 async fn handle(stream: UnixStream, app: Arc<App>, my_uid: Option<u32>) -> std::io::Result<()> {
     let cred = stream.peer_cred()?;
     // The socket is 0600 already; refuse anyone else anyway.
@@ -79,17 +89,8 @@ async fn handle(stream: UnixStream, app: Arc<App>, my_uid: Option<u32>) -> std::
     if n == 0 {
         return Ok(());
     }
-    let msg: ClientMessage = match serde_json::from_str(line.trim_end()) {
-        Ok(m) => m,
-        Err(_) => {
-            return send(
-                &mut wr,
-                &DaemonMessage::Error {
-                    message: "bad request".into(),
-                },
-            )
-            .await;
-        }
+    let Ok(msg) = serde_json::from_str::<ClientMessage>(line.trim_end()) else {
+        return refuse(&mut wr, "bad request").await;
     };
 
     match msg {
@@ -108,23 +109,40 @@ async fn handle(stream: UnixStream, app: Arc<App>, my_uid: Option<u32>) -> std::
         }
         ClientMessage::Ask { prompt } => {
             let Some(pid) = peer_pid else {
-                return send(
-                    &mut wr,
-                    &DaemonMessage::Error {
-                        message: "no peer pid".into(),
-                    },
-                )
-                .await;
+                return refuse(&mut wr, "no peer pid").await;
             };
-            let info = gather_info(&app, pid, cred.uid(), &prompt);
-            ask(app, info, reader, wr).await
+            let info = sudo_info(&app, pid, cred.uid(), &prompt);
+            run_request(app, info, reader, wr).await
+        }
+        ClientMessage::Store { name } => {
+            let Some(pid) = peer_pid else {
+                return refuse(&mut wr, "no peer pid").await;
+            };
+            let path = match pitl_core::secrets::path_for(&app.cfg.secrets_dir, &name) {
+                Ok(p) => p,
+                Err(e) => return refuse(&mut wr, e).await,
+            };
+            let kind = RequestKind::Store {
+                name,
+                path: path.display().to_string(),
+            };
+            let info = store_info(&app, pid, cred.uid(), kind);
+            run_request(app, info, reader, wr).await
         }
     }
 }
 
+fn cmdline_or_unknown(p: &Option<proc_info::ProcSummary>) -> String {
+    p.as_ref()
+        .map(|p| p.cmdline.clone())
+        .unwrap_or_else(|| "unknown".into())
+}
+
 /// Everything shown to the human comes from here: the kernel's view of who is
 /// on the other end of the socket, not from text the requester sent.
-fn gather_info(app: &App, askpass_pid: u32, uid: u32, prompt: &str) -> RequestInfo {
+/// For sudo, the peer is askpass; its parent is sudo, and sudo's parent is
+/// whoever ran it.
+fn sudo_info(app: &App, askpass_pid: u32, uid: u32, prompt: &str) -> RequestInfo {
     let askpass = proc_info::read_proc(askpass_pid);
     let program = askpass.as_ref().and_then(|a| proc_info::read_proc(a.ppid));
     let requester = program.as_ref().and_then(|p| proc_info::read_proc(p.ppid));
@@ -134,16 +152,27 @@ fn gather_info(app: &App, askpass_pid: u32, uid: u32, prompt: &str) -> RequestIn
         machine: app.cfg.machine.clone(),
         user: proc_info::user_name(uid),
         uid,
-        command: program
-            .as_ref()
-            .map(|p| p.cmdline.clone())
-            .unwrap_or_else(|| "unknown".into()),
-        requester: requester
-            .as_ref()
-            .map(|r| r.cmdline.clone())
-            .unwrap_or_else(|| "unknown".into()),
+        command: cmdline_or_unknown(&program),
+        requester: cmdline_or_unknown(&requester),
         requester_pid: requester.map(|r| r.pid).unwrap_or(0),
         prompt,
+        kind: RequestKind::Sudo,
+    }
+}
+
+/// For store, the peer is the `pitl store` command itself.
+fn store_info(app: &App, peer_pid: u32, uid: u32, kind: RequestKind) -> RequestInfo {
+    let program = proc_info::read_proc(peer_pid);
+    let requester = program.as_ref().and_then(|p| proc_info::read_proc(p.ppid));
+    RequestInfo {
+        machine: app.cfg.machine.clone(),
+        user: proc_info::user_name(uid),
+        uid,
+        command: cmdline_or_unknown(&program),
+        requester: cmdline_or_unknown(&requester),
+        requester_pid: requester.map(|r| r.pid).unwrap_or(0),
+        prompt: String::new(),
+        kind,
     }
 }
 
@@ -151,29 +180,30 @@ fn audit(app: &App, event: &str, id: RequestId, info: &RequestInfo) {
     app.audit.write(&AuditRecord::new(event, id.to_hex(), info));
 }
 
-async fn ask(
+async fn run_request(
     app: Arc<App>,
     info: RequestInfo,
-    mut reader: BufReader<tokio::net::unix::OwnedReadHalf>,
+    mut reader: BufReader<OwnedReadHalf>,
     mut wr: OwnedWriteHalf,
 ) -> std::io::Result<()> {
     let (id, mut woken) = app.store.create(info.clone())?;
     let url = app.link(&id.to_hex());
     audit(&app, "created", id, &info);
-    eprintln!("pitld: request {} from \"{}\": {}", id, info.command, url);
+    eprintln!(
+        "pitld: {} request {} from \"{}\": {}",
+        info.kind.as_str(),
+        id,
+        info.command,
+        url
+    );
 
     let expires_unix = app.store.view(id).map(|v| v.expires_unix).unwrap_or(0);
-    if send(
-        &mut wr,
-        &DaemonMessage::Pending {
-            id: id.to_hex(),
-            url,
-            expires_unix,
-        },
-    )
-    .await
-    .is_err()
-    {
+    let pending = DaemonMessage::Pending {
+        id: id.to_hex(),
+        url,
+        expires_unix,
+    };
+    if send(&mut wr, &pending).await.is_err() {
         if app.store.cancel(id).is_ok() {
             audit(&app, "canceled", id, &info);
         }
@@ -184,8 +214,8 @@ async fn ask(
     let mut probe = [0u8; 1];
     tokio::select! {
         _ = &mut woken => {}
-        // askpass sends nothing after its question, so any read result means
-        // it went away (or misbehaved). Fail closed.
+        // The client sends nothing after its question, so any read result
+        // means it went away (or misbehaved). Fail closed.
         _ = reader.read(&mut probe) => {
             if app.store.cancel(id).is_ok() {
                 audit(&app, "canceled", id, &info);
@@ -196,27 +226,12 @@ async fn ask(
     }
 
     match app.store.consume(id) {
-        ConsumeOutcome::Secret(secret) => {
-            let mut payload = Zeroizing::new(Vec::with_capacity(secret.len() + 1));
-            payload.extend_from_slice(secret.as_bytes());
-            payload.push(b'\n');
-            drop(secret);
-            let delivered = async {
-                wr.write_all(&DaemonMessage::Secret.to_line()).await?;
-                wr.write_all(&payload).await?;
-                wr.flush().await?;
-                wr.shutdown().await
+        ConsumeOutcome::Secret(secret) => match &info.kind {
+            RequestKind::Sudo => deliver_to_askpass(&app, id, &info, secret, &mut wr).await,
+            RequestKind::Store { name, .. } => {
+                store_to_file(&app, id, &info, name.clone(), secret, &mut wr).await
             }
-            .await;
-            drop(payload);
-            match delivered {
-                Ok(()) => audit(&app, "consumed", id, &info),
-                Err(_) => {
-                    let _ = app.store.mark_failed(id);
-                    audit(&app, "failed", id, &info);
-                }
-            }
-        }
+        },
         ConsumeOutcome::StillPending => {
             // Woken without an answer can only mean the deadline passed.
             let state = app.store.expire_if_due(id).unwrap_or(State::Expired);
@@ -234,6 +249,77 @@ async fn ask(
         }
     }
     Ok(())
+}
+
+async fn deliver_to_askpass(
+    app: &App,
+    id: RequestId,
+    info: &RequestInfo,
+    secret: Zeroizing<String>,
+    wr: &mut OwnedWriteHalf,
+) {
+    let mut payload = Zeroizing::new(Vec::with_capacity(secret.len() + 1));
+    payload.extend_from_slice(secret.as_bytes());
+    payload.push(b'\n');
+    drop(secret);
+    let delivered = async {
+        wr.write_all(&DaemonMessage::Secret.to_line()).await?;
+        wr.write_all(&payload).await?;
+        wr.flush().await?;
+        wr.shutdown().await
+    }
+    .await;
+    drop(payload);
+    match delivered {
+        Ok(()) => audit(app, "consumed", id, info),
+        Err(_) => {
+            let _ = app.store.mark_failed(id);
+            audit(app, "failed", id, info);
+        }
+    }
+}
+
+/// Write a stored secret to its file. The client only ever hears the name and
+/// path back, never the value.
+async fn store_to_file(
+    app: &App,
+    id: RequestId,
+    info: &RequestInfo,
+    name: String,
+    secret: Zeroizing<String>,
+    wr: &mut OwnedWriteHalf,
+) {
+    let dir = app.cfg.secrets_dir.clone();
+    let task_name = name.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        secret_store::write(&dir, &task_name, secret.as_bytes())
+    })
+    .await;
+    match written {
+        Ok(Ok(path)) => {
+            audit(app, "stored", id, info);
+            let _ = send(
+                wr,
+                &DaemonMessage::Stored {
+                    name,
+                    path: path.display().to_string(),
+                },
+            )
+            .await;
+        }
+        Ok(Err(e)) => {
+            // The error comes from the filesystem, never from the value.
+            eprintln!("pitld: could not store secret '{name}': {e}");
+            let _ = app.store.mark_failed(id);
+            audit(app, "failed", id, info);
+            let _ = send(wr, &DaemonMessage::Failed).await;
+        }
+        Err(_) => {
+            let _ = app.store.mark_failed(id);
+            audit(app, "failed", id, info);
+            let _ = send(wr, &DaemonMessage::Failed).await;
+        }
+    }
 }
 
 async fn finish(

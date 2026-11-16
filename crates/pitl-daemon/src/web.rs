@@ -12,7 +12,7 @@ use axum::{Form, Router};
 use pitl_core::audit::AuditRecord;
 use pitl_core::state::RequestView;
 use pitl_core::timefmt::rfc3339;
-use pitl_core::{RequestId, State, TransitionError};
+use pitl_core::{RequestId, RequestKind, State, TransitionError};
 use serde::Deserialize;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -103,14 +103,32 @@ async fn index() -> Response {
 
 fn details(v: &RequestView) -> String {
     let i = &v.info;
+    let what = match &i.kind {
+        RequestKind::Sudo => String::new(),
+        RequestKind::Store { name, path } => format!(
+            "<dt>Secret name</dt><dd><code>{}</code></dd>\
+<dt>Will be saved to</dt><dd><code>{}</code> (file readable only by {})</dd>",
+            esc(name),
+            esc(path),
+            esc(&i.user),
+        ),
+    };
+    let prompt = match i.kind {
+        RequestKind::Sudo => format!(
+            "<dt>Prompt text</dt><dd class=\"unverified\">{} <small>(supplied by the program, not verified)</small></dd>",
+            esc(&i.prompt)
+        ),
+        RequestKind::Store { .. } => String::new(),
+    };
     format!(
         "<dl>\
 <dt>Machine</dt><dd>{}</dd>\
 <dt>User</dt><dd>{} (uid {})</dd>\
+{what}\
 <dt>Command</dt><dd><code>{}</code></dd>\
 <dt>Started by</dt><dd><code>{}</code> (pid {})</dd>\
 <dt>Expires</dt><dd>{} <span id=\"left\" data-expires=\"{}\">({} s left)</span></dd>\
-<dt>Prompt text</dt><dd class=\"unverified\">{} <small>(supplied by the program, not verified)</small></dd>\
+{prompt}\
 </dl>",
         esc(&i.machine),
         esc(&i.user),
@@ -121,7 +139,6 @@ fn details(v: &RequestView) -> String {
         esc(&rfc3339(v.expires_unix)),
         v.expires_unix,
         v.seconds_left,
-        esc(&i.prompt),
     )
 }
 
@@ -140,26 +157,42 @@ async fn show(AxState(app): AxState<Arc<App>>, Path(id): Path<String>) -> Respon
         return finished_page(&v);
     }
     let hex = v.id.clone();
+    let (heading, label, button, note) = match &v.info.kind {
+        RequestKind::Sudo => (
+            "Password request".to_string(),
+            format!("Password for {}", esc(&v.info.user)),
+            "Approve and send",
+            "The password goes from this page to the waiting program on that machine, once. It is not shown to the agent and not logged.",
+        ),
+        RequestKind::Store { name, .. } => (
+            "Store a secret".to_string(),
+            format!("Value for <code>{}</code>", esc(name)),
+            "Store on this machine",
+            "The value goes from this page straight into that file, once. It is not shown to the agent, not sent back to the program that asked, and not logged. Programs running as this user can read the file.",
+        ),
+    };
     let body = format!(
-        "<h1>Password request</h1>\
+        "<h1>{heading}</h1>\
 <p class=\"warn\">Only answer if you started this, or you expected it. If anything looks wrong, deny.</p>\
 {}\
 <form method=\"post\" action=\"/r/{hex}/approve\" autocomplete=\"off\">\
-<label for=\"pw\">Password for {}</label>\
+<label for=\"pw\">{label}</label>\
 <input id=\"pw\" name=\"password\" type=\"password\" autocomplete=\"off\" autocapitalize=\"off\" spellcheck=\"false\" required>\
-<button class=\"approve\" type=\"submit\">Approve and send</button></form>\
+<button class=\"approve\" type=\"submit\">{button}</button></form>\
 <form method=\"post\" action=\"/r/{hex}/deny\"><button class=\"deny\" type=\"submit\">Deny</button></form>\
-<p class=\"note\">The password goes from this page to the waiting program on that machine, once. It is not shown to the agent and not logged.</p>",
+<p class=\"note\">{note}</p>",
         details(&v),
-        esc(&v.info.user),
     );
     Html(page("PITL request", &body)).into_response()
 }
 
 fn finished_page(v: &RequestView) -> Response {
     let text = match v.state {
-        "consumed" => "This request was answered and used. The link no longer works.",
-        "authorized" => "Answered. Sending it to the waiting program.",
+        "consumed" => match v.info.kind {
+            RequestKind::Sudo => "This request was answered and used. The link no longer works.",
+            RequestKind::Store { .. } => "The secret was stored. The link no longer works.",
+        },
+        "authorized" => "Answered. Delivering it now.",
         "denied" => "This request was denied.",
         "expired" => "This request expired before it was answered.",
         "canceled" => "The program that asked stopped waiting. Nothing was sent.",
@@ -254,17 +287,22 @@ async fn approve(
         return message(
             StatusCode::BAD_REQUEST,
             "Not sent",
-            "The password was empty or had a line break in it.",
+            "The value was empty or had a line break in it.",
         );
     }
     match app.store.authorize(id, secret) {
         Ok(()) => {
             audit_answer(&app, "authorized", id, &headers);
-            message(
-                StatusCode::OK,
-                "Sent",
-                "The password was sent to the waiting program. You can close this page.",
-            )
+            let store = app
+                .store
+                .view(id)
+                .is_some_and(|v| matches!(v.info.kind, RequestKind::Store { .. }));
+            let text = if store {
+                "The secret was sent to pitld to be written to its file. You can close this page."
+            } else {
+                "The password was sent to the waiting program. You can close this page."
+            };
+            message(StatusCode::OK, "Sent", text)
         }
         Err(e) => conflict(e),
     }

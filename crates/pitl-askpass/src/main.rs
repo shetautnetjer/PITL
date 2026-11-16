@@ -88,7 +88,7 @@ fn run() -> io::Result<bool> {
                 eprintln!("pitl: pitld refused the request: {message}");
                 return Ok(false);
             }
-            DaemonMessage::List { .. } => return Ok(false),
+            DaemonMessage::List { .. } | DaemonMessage::Stored { .. } => return Ok(false),
         }
     }
 }

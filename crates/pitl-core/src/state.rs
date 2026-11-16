@@ -72,7 +72,34 @@ pub struct RequestInfo {
     pub requester: String,
     pub requester_pid: u32,
     /// The prompt text sudo passed to askpass. Shown, but labelled as unverified.
+    /// Empty for store requests.
     pub prompt: String,
+    /// What is being asked for.
+    pub kind: RequestKind,
+}
+
+/// The kinds of request pitld handles.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RequestKind {
+    /// A password handed once to a waiting `SUDO_ASKPASS` helper.
+    Sudo,
+    /// A secret written by pitld to a 0600 file, never sent back to anyone.
+    Store {
+        /// Validated name, see `crate::secrets::validate_name`.
+        name: String,
+        /// The file it will be written to.
+        path: String,
+    },
+}
+
+impl RequestKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RequestKind::Sudo => "sudo",
+            RequestKind::Store { .. } => "store",
+        }
+    }
 }
 
 pub struct Request {
@@ -354,6 +381,7 @@ mod tests {
             requester: "bash".into(),
             requester_pid: 1,
             prompt: "[sudo] password for u: ".into(),
+            kind: RequestKind::Sudo,
         }
     }
 

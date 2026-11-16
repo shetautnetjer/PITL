@@ -87,6 +87,34 @@ their links; `pitl audit` shows the audit log.
 If you run Tailscale in userspace mode with its own socket, add
 `--socket=<path>` to the `tailscale` commands.
 
+## Store a secret from your phone (`pitl store`)
+
+Some tools need a long-lived token, such as a 1Password service account
+token. `pitl store` lets you hand one to the machine without pasting it into
+an agent's chat:
+
+```bash
+pitl store --name op-service-account
+```
+
+You get the same kind of one-time, tailnet-only link. The page shows the
+secret's name and the file it will go to. You paste the value and approve;
+**pitld** writes it to `~/.config/pitl/secrets/op-service-account` (file
+0600, folder 0700). The command that asked only learns "stored" and the path;
+the value is never echoed or logged.
+
+For 1Password, [`contrib/pitl-op`](contrib/pitl-op) runs the `op` CLI with
+that token at run time:
+
+```bash
+install -m 0755 contrib/pitl-op ~/.local/bin/
+pitl-op vault list
+```
+
+> **Every program running as your user can read a stored secret**, including
+> every agent. Store only what you are willing to give all of them. See
+> [the security notes](docs/SECURITY.md#stored-secrets-pitl-store-are-readable-by-every-agent-of-that-user).
+
 ## Planned
 
 - **0.2**: pair your phone by scanning a QR code; every answer needs your
