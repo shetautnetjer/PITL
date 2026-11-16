@@ -58,6 +58,25 @@ On `secret`, askpass writes the secret plus a newline to stdout and exits 0.
 On anything else it writes nothing to stdout and exits 1, which sudo treats as
 no password.
 
+### Store (`pitl store --name NAME`)
+
+```text
+→ {"op":"store","name":"op-service-account"}
+← {"status":"pending","id":"<32 hex>","url":"https://.../r/<id>","expires_unix":...}
+   ... waits ...
+← {"status":"stored","name":"op-service-account","path":"/home/<user>/.config/pitl/secrets/op-service-account"}
+   or {"status":"denied"} | {"status":"expired"} | {"status":"canceled"} | {"status":"failed"}
+← {"status":"error","message":"..."}   (bad name; nothing is created)
+```
+
+The value is never sent on the socket. On approval pitld writes it to
+`<secrets dir>/<name>`: directory 0700, file 0600, via a temporary file,
+fsync and rename. The default directory is `$XDG_CONFIG_HOME/pitl/secrets`,
+else `~/.config/pitl/secrets` (`pitld --secrets-dir` to change).
+
+Names: 1 to 64 characters from `a-z`, `0-9`, `-`, `_`, `.`, starting with a
+letter or digit, no `..`.
+
 ### CLI
 
 ```text
@@ -78,7 +97,11 @@ Gathered by pitld, not supplied by the asker:
 | Command | `/proc/<parent of askpass>/cmdline` (normally the `sudo` command line) |
 | Started by | `/proc/<parent of that>/cmdline` |
 | Expires | pitld's own clock |
-| Prompt text | sudo's argv[1] to askpass, labelled unverified |
+| Prompt text | sudo's argv[1] to askpass, labelled unverified (sudo requests only) |
+| Secret name, saved to | the validated name and pitld's own path for it (store requests only) |
+
+For store requests, "Command" is the `pitl store` command line and "Started
+by" is its parent.
 
 Command lines are truncated to 512 characters, and control characters are
 replaced, so they can't fake text on the page.
@@ -107,8 +130,9 @@ strict `Content-Security-Policy` (no inline script, forms post only to self).
 mode 0600. One JSON object per event:
 
 ```json
-{"time":"2026-01-01T12:00:00Z","event":"authorized","id":"<32 hex>","machine":"host","user":"alice","command":"sudo -A -k /usr/bin/id","requester":"bash","requester_pid":1234,"answered_by":"unverified:alice@example.com","device":"unverified:100.64.0.2"}
+{"time":"2026-01-01T12:00:00Z","kind":"sudo","event":"authorized","id":"<32 hex>","machine":"host","user":"alice","command":"sudo -A -k /usr/bin/id","requester":"bash","requester_pid":1234,"answered_by":"unverified:alice@example.com","device":"unverified:100.64.0.2"}
 ```
 
-Events: `created`, `authorized`, `consumed`, `denied`, `expired`, `canceled`,
-`failed`. The record type has no field for a secret.
+Every record has `kind` (`sudo` or `store`); store records also have
+`secret_name`. Events: `created`, `authorized`, `consumed` (sudo), `stored`
+(store), `denied`, `expired`, `canceled`, `failed`. The record type has no field for a secret.

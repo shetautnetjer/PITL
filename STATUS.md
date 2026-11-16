@@ -19,11 +19,25 @@ agent, and the command ran as root. Details under "Tried live" below.
 - Single atomic consume; deny, expiry, cancel on disconnect and failed delivery
   all fail closed.
 - Audit log (JSONL, 0600) with metadata only.
+- **Store requests** (`pitl store --name NAME`): the owner pastes a secret on
+  the phone page; pitld writes it to `~/.config/pitl/secrets/NAME` (0600 file,
+  0700 directory, atomic write). The client only hears "stored" and the path.
+- `contrib/pitl-op` runs the 1Password CLI with a stored service account
+  token, read at run time; refuses a token file that isn't 0600/0400.
 - Builds without warnings; `cargo clippy -D warnings` and `cargo fmt` clean.
 
 ### Tests
 
-24 passing (`cargo test --workspace`):
+Store feature (on the `pitl-store-secret` branch): 13 more Rust tests and 3
+shell tests. Value lands only in the 0600 file (not in the client reply, page
+or audit); audit has name, time, device and outcome; link can't be reused;
+deny, expiry and disconnect write nothing; unsafe names refused before
+anything is shown; replacing a loosened file leaves it 0600; name validation;
+atomic writer leaves no temporary files. `contrib/test-pitl-op.sh`: token
+reaches op through the environment and is never printed; loose file mode
+refused; clear error when nothing is stored.
+
+37 Rust tests pass in total (`cargo test --workspace`). The original 0.1 set:
 
 - core: state machine (approve/consume once, deny final, expiry blocks approval
   and drops an undelivered secret, cancel, cancel after authorize, unknown id,

@@ -1,0 +1,45 @@
+#!/bin/sh
+# pitl-op: run the 1Password CLI with a service account token that
+# `pitl store` saved, reading it from its 0600 file at run time.
+#
+#   pitl store --name op-service-account     # once, answered on your phone
+#   pitl-op vault list                        # then use pitl-op like op
+#
+# The token is passed to op through the OP_SERVICE_ACCOUNT_TOKEN environment
+# variable of the op process only. It is never printed.
+#
+# Settings (environment):
+#   PITL_OP_SECRET   secret name (default: op-service-account)
+#   PITL_SECRETS_DIR directory (default: ${XDG_CONFIG_HOME:-$HOME/.config}/pitl/secrets)
+#   PITL_REAL_OP     the real op binary (default: first `op` on PATH)
+set -eu
+
+name="${PITL_OP_SECRET:-op-service-account}"
+dir="${PITL_SECRETS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/pitl/secrets}"
+file="$dir/$name"
+
+real_op="${PITL_REAL_OP:-$(command -v op || true)}"
+if [ -z "$real_op" ] || [ ! -x "$real_op" ]; then
+  echo "pitl-op: the 1Password CLI (op) was not found; set PITL_REAL_OP" >&2
+  exit 127
+fi
+
+if [ ! -f "$file" ]; then
+  echo "pitl-op: no token at $file; store one with: pitl store --name $name" >&2
+  exit 1
+fi
+
+# Refuse a token file others can read: something loosened it.
+perms="$(stat -c '%a' "$file")"
+case "$perms" in
+  600|400) ;;
+  *) echo "pitl-op: $file has mode $perms; expected 600" >&2; exit 1 ;;
+esac
+
+OP_SERVICE_ACCOUNT_TOKEN="$(tr -d '\r\n' < "$file")"
+if [ -z "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
+  echo "pitl-op: $file is empty" >&2
+  exit 1
+fi
+export OP_SERVICE_ACCOUNT_TOKEN
+exec "$real_op" "$@"

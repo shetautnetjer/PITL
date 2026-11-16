@@ -10,6 +10,10 @@
 //! pitld  -> askpass  {"status":"secret"}\n<secret bytes>\n      (once, then close)
 //!                or  {"status":"denied"} | {"status":"expired"} | {"status":"canceled"} | {"status":"failed"}
 //!
+//! pitl   -> pitld    {"op":"store","name":"op-service-account"}
+//! pitld  -> pitl     {"status":"pending",...} then {"status":"stored","name":...,"path":...}
+//!                    (or denied/expired/canceled/failed; the secret is never sent)
+//!
 //! pitl   -> pitld    {"op":"list"}
 //! pitld  -> pitl     {"status":"list","pending":[RequestView...]}
 //! ```
@@ -27,6 +31,9 @@ pub enum ClientMessage {
     Ask { prompt: String },
     /// From the CLI: list pending requests.
     List,
+    /// From `pitl store`: ask the human for a secret to be written to a file
+    /// by pitld. The secret is never sent back on the socket.
+    Store { name: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -39,6 +46,11 @@ pub enum DaemonMessage {
     },
     /// The next line on the socket is the secret.
     Secret,
+    /// A store request finished: pitld wrote the secret to `path`.
+    Stored {
+        name: String,
+        path: String,
+    },
     Denied,
     Expired,
     Canceled,

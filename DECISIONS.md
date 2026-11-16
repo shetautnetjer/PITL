@@ -69,3 +69,23 @@ sending something different from what the owner typed.
 Long enough to pick up a phone, short enough that a forgotten link is dead.
 Live testing showed sudo does **not** retry when askpass returns nothing: one
 expiry ends that sudo run.
+
+## D12. Store requests: pitld writes the file, the client never sees the value
+
+`pitl store --name NAME` reuses the request flow, but on approval pitld itself
+writes the value to a 0600 file and only tells the client "stored" and the
+path. The CLI never receives the value, so it cannot print or log it.
+
+## D13. At rest, stored secrets are readable by the same user, and we say so
+
+A 0600 file protects against other users only. For a long-lived token that
+every agent of the user needs to use, that is unavoidable without an isolated
+executor (0.3). SECURITY.md says plainly that any agent of that user can read
+the file.
+
+## D14. `pitl-op` wrapper instead of shadowing `op`
+
+The wrapper passes the token to `op` through `OP_SERVICE_ACCOUNT_TOKEN` at run
+time. It has its own name so that installing it doesn't change what `op`
+means for everything else on the machine (or depend on PATH order). It
+refuses a token file that isn't 0600 or 0400.

@@ -78,3 +78,19 @@ the secret, and the command shown to the owner is the command that runs.
 - **Tailscale Serve terminates TLS** on the same machine and forwards plain
   HTTP to 127.0.0.1. Local processes of the same user could observe that hop
   (same-user limitation again).
+
+## Stored secrets (`pitl store`)
+
+| Threat | Mitigation |
+|---|---|
+| Value reaches the agent through the request | The `pitl store` client only ever receives `stored`, `denied`, `expired`, `canceled` or `failed`, plus the name and path. pitld writes the value itself |
+| Value in logs or on the page | Never logged; the page never echoes it; the audit record has the name, never the value |
+| Other users read the file | File 0600, directory 0700 (tightened if looser), written to a temporary file and renamed into place |
+| Name used to write elsewhere | Names are `a-z 0-9 - _ .`, must start with a letter or digit, no `..`, max 64; checked by pitld before anything is shown |
+| Half-written file | Write, fsync, rename, fsync directory; failures leave no file behind |
+
+**At rest, the file is readable by every process of that user, including
+every agent.** That is the intended trade in 0.1: the secret is out of chats
+and logs and protected from other accounts, but it is a standing grant to all
+agents of this user. `pitl-op` also puts the token in the environment of the
+`op` process it starts, which same-user processes can read through `/proc`.

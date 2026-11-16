@@ -45,6 +45,13 @@ human check entirely (passwordless sudo for everything).
 9. Anything unexpected fails closed: no answer, expiry, a dropped connection,
    a daemon restart or a reused link all mean "no".
 
+### Added in 0.1: store a secret
+
+`pitl store --name NAME` asks the owner, through the same kind of link, for a
+long-lived secret (for example a 1Password service account token). pitld
+writes it to a 0600 file; the asking program learns only "stored" and the
+path. `contrib/pitl-op` runs the 1Password CLI with that token.
+
 ## Non-goals for 0.1
 
 - Protection against a **hostile agent** running as the same user. That

@@ -3,6 +3,7 @@
 //! Serve, or on the tailnet address).
 
 pub mod audit;
+pub mod secret_store;
 pub mod socket;
 pub mod web;
 
@@ -30,6 +31,8 @@ pub struct Config {
     /// True when the HTTP listener is only reachable through Tailscale Serve,
     /// so its `Tailscale-User-*` identity headers can be trusted.
     pub behind_serve: bool,
+    /// Where `pitl store` secrets are written (directory kept at 0700).
+    pub secrets_dir: PathBuf,
 }
 
 pub struct App {

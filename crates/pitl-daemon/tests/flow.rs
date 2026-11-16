@@ -29,6 +29,7 @@ impl Harness {
             ttl,
             machine: "test-machine".into(),
             behind_serve: true,
+            secrets_dir: dir.path().join("secrets"),
         };
         let app = App::new(cfg).unwrap();
         let listener = socket::bind(&app.cfg.socket_path).unwrap();

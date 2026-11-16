@@ -10,10 +10,75 @@ const USAGE: &str = "\
 pitl: PITL helper
 
 Usage:
+  pitl store --name NAME
+                     Ask a human, on their phone, for a secret that pitld
+                     writes to ~/.config/pitl/secrets/NAME (0600). This
+                     command never receives the value.
   pitl list          Show pending requests and their phone links
   pitl audit [N]     Show the last N audit records (default 20)
   pitl paths         Show the socket and audit log locations
 ";
+
+/// Ask pitld to collect a secret from the phone and store it. Prints the link
+/// on stderr and the outcome on stdout. Exit 0 only when stored.
+fn store(name: &str) -> io::Result<bool> {
+    pitl_core::secrets::validate_name(name)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let path = pitl_core::paths::socket_path();
+    let s = UnixStream::connect(&path).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("cannot reach pitld at {}: {e}", path.display()),
+        )
+    })?;
+    s.set_read_timeout(Some(std::time::Duration::from_secs(15 * 60)))?;
+    (&s).write_all(
+        &ClientMessage::Store {
+            name: name.to_string(),
+        }
+        .to_line(),
+    )?;
+    let mut reader = BufReader::new(s);
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "pitld closed the connection",
+            ));
+        }
+        match serde_json::from_str::<DaemonMessage>(&line) {
+            Ok(DaemonMessage::Pending {
+                url, expires_unix, ..
+            }) => eprintln!(
+                "pitl: open this on your phone to provide '{name}': {url} (expires {})",
+                pitl_core::timefmt::rfc3339(expires_unix)
+            ),
+            Ok(DaemonMessage::Stored { name, path }) => {
+                println!("stored '{name}' at {path}");
+                return Ok(true);
+            }
+            Ok(DaemonMessage::Denied) => {
+                println!("denied: nothing was stored");
+                return Ok(false);
+            }
+            Ok(DaemonMessage::Expired) => {
+                println!("expired: nothing was stored");
+                return Ok(false);
+            }
+            Ok(DaemonMessage::Error { message }) => {
+                println!("refused by pitld: {message}");
+                return Ok(false);
+            }
+            // A store request is never answered with a secret; treat any
+            // other reply as a failure without reading further.
+            _ => {
+                println!("failed: nothing was stored");
+                return Ok(false);
+            }
+        }
+    }
+}
 
 fn list() -> io::Result<()> {
     let path = pitl_core::paths::socket_path();
@@ -66,11 +131,29 @@ fn audit(n: usize) -> io::Result<()> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
+        Some("store") => {
+            let name = match (args.get(1).map(String::as_str), args.get(2)) {
+                (Some("--name"), Some(n)) => n.clone(),
+                _ => {
+                    print!("{USAGE}");
+                    return ExitCode::from(2);
+                }
+            };
+            return match store(&name) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
+                Err(e) => {
+                    eprintln!("pitl: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         Some("list") => list(),
         Some("audit") => audit(args.get(1).and_then(|n| n.parse().ok()).unwrap_or(20)),
         Some("paths") => {
             println!("socket: {}", pitl_core::paths::socket_path().display());
             println!("audit:  {}", pitl_core::paths::audit_path().display());
+            println!("secrets: {}", pitl_core::secrets::default_dir().display());
             Ok(())
         }
         _ => {
