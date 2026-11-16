@@ -2,6 +2,10 @@
 
 ## 0.1.0 (compatibility mode)
 
+**Live sudo round trip: passed.** `sudo -A -k /usr/bin/id` was approved from a
+phone over the tailnet; the password reached sudo once, never through the
+agent, and the command ran as root. Details under "Tried live" below.
+
 ### Works
 
 - Rust workspace: `pitl-core`, `pitl-daemon` (`pitld`), `pitl-cli` (`pitl`),
