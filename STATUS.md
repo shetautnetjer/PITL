@@ -24,6 +24,10 @@ agent, and the command ran as root. Details under "Tried live" below.
   0700 directory, atomic write). The client only hears "stored" and the path.
 - `contrib/pitl-op` runs the 1Password CLI with a stored service account
   token, read at run time; refuses a token file that isn't 0600/0400.
+- **op.env convention** (`docs/OP-ENV.md`): one `~/.config/op-env/<program>.op.env`
+  per program with `op://` references only; `contrib/pitl-op-env` adds
+  (checking the reference resolves without showing it), lists, checks and runs.
+  `pitl-op run` starts the program without the service account token.
 - Builds without warnings; `cargo clippy -D warnings` and `cargo fmt` clean.
 
 ### Tests
@@ -36,6 +40,15 @@ anything is shown; replacing a loosened file leaves it 0600; name validation;
 atomic writer leaves no temporary files. `contrib/test-pitl-op.sh`: token
 reaches op through the environment and is never printed; loose file mode
 refused; clear error when nothing is stored.
+`contrib/test-pitl-op-env.sh` (7 checks): add stores only the reference with
+0700/0600; unresolvable references, values, malformed references, bad names
+and duplicates refused; run gives the program the value but not the service
+token; an op.env with a value line or loose mode is refused; check prints
+names only.
+
+Live on a real 1Password service account: `pitl-op-env add` resolved a test
+item by id, `check` passed, and `pitl-op-env run` gave the program the value
+while withholding the service token.
 
 37 Rust tests pass in total (`cargo test --workspace`). The original 0.1 set:
 

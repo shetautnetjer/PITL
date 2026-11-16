@@ -1,0 +1,127 @@
+#!/bin/sh
+# pitl-op-env: keep each program's 1Password references in one place and run
+# programs with the real values only inside the program.
+#
+#   pitl-op-env add <program> <ENV_NAME> <op://vault/item/field>
+#   pitl-op-env run <program> -- <command> [args...]
+#   pitl-op-env list <program>
+#   pitl-op-env check <program>
+#   pitl-op-env path <program>
+#
+# Files live in ${PITL_OP_ENV_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/op-env}
+# as <program>.op.env (folder 0700, files 0600). They hold only lines like
+#   ENV_NAME=op://vault/item/field
+# never values. Values are fetched by `pitl-op run` when the program starts
+# and exist only in that program's environment. See docs/OP-ENV.md.
+set -eu
+
+dir="${PITL_OP_ENV_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/op-env}"
+pitl_op="${PITL_OP:-pitl-op}"
+
+die() { echo "pitl-op-env: $*" >&2; exit 1; }
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+check_program() {
+  case "$1" in
+    ''|*[!a-z0-9._-]*|[!a-z0-9]*) die "program name must use a-z 0-9 . _ - and start with a letter or digit: '$1'" ;;
+  esac
+  case "$1" in *..*) die "program name may not contain '..'" ;; esac
+}
+
+env_file() { printf '%s/%s.op.env\n' "$dir" "$1"; }
+
+ensure_dir() {
+  mkdir -p "$dir"
+  chmod 700 "$dir"
+}
+
+# Every non-blank, non-comment line must be NAME=op://... so a value can
+# never sit in the file (or be passed to op run) by mistake.
+check_file() {
+  f="$1"
+  [ -f "$f" ] || die "no env file for this program yet: $f (add one with: pitl-op-env add ...)"
+  perms="$(stat -c '%a' "$f")"
+  case "$perms" in 600|400) ;; *) die "$f has mode $perms; expected 600" ;; esac
+  bad="$(grep -nvE '^[[:space:]]*(#.*)?$|^[A-Z_][A-Z0-9_]*=op://[^[:space:]]+$' "$f" | cut -d: -f1 | tr '\n' ' ' || true)"
+  [ -z "$bad" ] || die "$f has lines that are not NAME=op://... (line numbers: $bad); fix them before running"
+}
+
+cmd="${1:-}"
+[ -n "$cmd" ] || usage
+shift
+
+case "$cmd" in
+  add)
+    [ $# -eq 3 ] || usage
+    program="$1"; name="$2"; ref="$3"
+    check_program "$program"
+    case "$name" in ''|[!A-Z_]*|*[!A-Z0-9_]*) die "ENV_NAME must look like MY_API_KEY: '$name'" ;; esac
+    case "$ref" in
+      op://*/*/*) ;;
+      *) die "the reference must look like op://vault/item/field (not a value)" ;;
+    esac
+    case "$ref" in *[[:space:]]*)
+      die "references with spaces don't work in env files; use ids, e.g. op://<vault>/<item-id>/<field> (see: pitl-op item get NAME --vault VAULT --format json, read only the id)" ;;
+    esac
+    f="$(env_file "$program")"
+    if [ -f "$f" ] && grep -q "^$name=" "$f"; then
+      die "$name is already in $f; remove that line first if you want to change it"
+    fi
+    # Check the reference resolves, without letting the value out: stdout
+    # (the value) goes to /dev/null; only op's error message is kept.
+    errfile="$(mktemp)"
+    if ! "$pitl_op" read --no-newline "$ref" >/dev/null 2>"$errfile"; then
+      msg="$(head -n 1 "$errfile" | cut -c1-200)"
+      rm -f "$errfile"
+      die "could not resolve $ref: $msg"
+    fi
+    rm -f "$errfile"
+    ensure_dir
+    umask 077
+    [ -f "$f" ] || printf '# op.env for %s: references only, never values. See docs/OP-ENV.md.\n' "$program" > "$f"
+    chmod 600 "$f"
+    printf '%s=%s\n' "$name" "$ref" >> "$f"
+    echo "added $name to $f (reference checked; value not shown)"
+    ;;
+  run)
+    [ $# -ge 1 ] || usage
+    program="$1"; shift
+    check_program "$program"
+    [ "${1:-}" = "--" ] || die "usage: pitl-op-env run <program> -- <command> [args...]"
+    shift
+    [ $# -ge 1 ] || die "no command given after --"
+    f="$(env_file "$program")"
+    check_file "$f"
+    exec "$pitl_op" run --env-file "$f" -- "$@"
+    ;;
+  list)
+    [ $# -eq 1 ] || usage
+    check_program "$1"
+    f="$(env_file "$1")"
+    check_file "$f"
+    grep -E '^[A-Z_][A-Z0-9_]*=op://' "$f"
+    ;;
+  check)
+    [ $# -eq 1 ] || usage
+    check_program "$1"
+    f="$(env_file "$1")"
+    check_file "$f"
+    failed=0
+    for line in $(grep -E '^[A-Z_][A-Z0-9_]*=op://' "$f"); do
+      name="${line%%=*}"; ref="${line#*=}"
+      if "$pitl_op" read --no-newline "$ref" >/dev/null 2>&1; then
+        echo "ok      $name"
+      else
+        echo "FAILED  $name ($ref)"
+        failed=1
+      fi
+    done
+    exit "$failed"
+    ;;
+  path)
+    [ $# -eq 1 ] || usage
+    check_program "$1"
+    env_file "$1"
+    ;;
+  *) usage ;;
+esac

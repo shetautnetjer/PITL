@@ -28,6 +28,15 @@ the file to take the access away locally.
 Protected mode (0.3) is meant to change this: secrets held by a separate user
 or helper and used on the agent's behalf, never readable by the agent's user.
 
+### op.env files and `pitl-op run`
+
+op.env files (`~/.config/op-env/<program>.op.env`) hold only `op://`
+references; `pitl-op-env` refuses to add or run anything else. `pitl-op run`
+starts the program without the service account token, so a program gets only
+the secrets its op.env lists. This narrows what each program receives; it is
+not a boundary between agents of the same user, who can still read the token
+file or another process's environment. See [OP-ENV.md](OP-ENV.md).
+
 ## Recommended setup
 
 - Expose pitld only through **Tailscale Serve** (tailnet-only HTTPS). Don't

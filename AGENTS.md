@@ -16,6 +16,7 @@ before changing behaviour.
 | `crates/pitl-askpass` | `SUDO_ASKPASS` helper. Synchronous, no async runtime |
 | `crates/pitl-cli` | `pitl store`, `pitl list`, `pitl audit`, `pitl paths`. Never handles secret values |
 | `contrib/pitl-op` | Runs the 1Password CLI with a token stored by `pitl store`; `contrib/test-pitl-op.sh` tests it |
+| `contrib/pitl-op-env` | op.env helper (`add`, `run`, `list`, `check`, `path`); `contrib/test-pitl-op-env.sh` tests it. Rules in `docs/OP-ENV.md` |
 | `bootstrap/` | No-sudo Tailscale setup |
 | `docs/` | PRD, threat model, protocol, security policy |
 
@@ -45,6 +46,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 sh contrib/test-pitl-op.sh
+sh contrib/test-pitl-op-env.sh
 ```
 
 Install for local use (no sudo):
@@ -58,3 +60,10 @@ install -m 0755 target/release/{pitld,pitl,pitl-askpass} ~/.local/bin/
 
 Update `docs/PROTOCOL.md` if messages, states or HTTP routes change, record
 the reason in `DECISIONS.md`, and update `STATUS.md`.
+
+## Using 1Password secrets yourself
+
+Follow [docs/OP-ENV.md](docs/OP-ENV.md): find the item once, add its `op://`
+reference with `pitl-op-env add`, then always start programs with
+`pitl-op-env run <program> -- <command>`. Never write, print or paste a
+secret value.
