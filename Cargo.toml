@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pitl-core",
+    "crates/pitl-daemon",
+    "crates/pitl-cli",
+    "crates/pitl-askpass",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/shetautnetjer/PITL"
+rust-version = "1.80"
+
+[workspace.dependencies]
+pitl-core = { path = "crates/pitl-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "fs"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"
