@@ -1,0 +1,61 @@
+From 5b49a8bb65a51d41fb051cb78aae51a83cbc1d12 Mon Sep 17 00:00:00 2001
+From: aya <shetaut.ai@gmail.com>
+Date: Tue, 17 Nov 2026 09:56:35 -0800
+Subject: [PATCH] lock: unlock from the phone through PITL (lock phoneUnlock)
+
+The lock asks pitl-askpass for the password the user types on their phone
+and submits it like a typed one: same PAM stack, same faillock count.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ shell/plugins/lock/Service.qml | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/shell/plugins/lock/Service.qml b/shell/plugins/lock/Service.qml
+index a02708e05..f86fa4be7 100644
+--- a/shell/plugins/lock/Service.qml
++++ b/shell/plugins/lock/Service.qml
+@@ -759,6 +759,23 @@ Item {
+     command: ["bash", "-c", "omarchy-system-wake"]
+   }
+ 
++  // Unlock from the phone (PITL, github.com/shetautnetjer/PITL): pitl-askpass
++  // asks the user on their phone and prints the password they typed there, or
++  // nothing if they denied or did not answer. It goes through submitPassword,
++  // so the same PAM stack and the same faillock count decide as for the
++  // keyboard: asking for this cannot unlock anything by itself.
++  Process {
++    id: phoneUnlockProcess
++    command: ["bash", "-c", "exec \"${PITL_ASKPASS:-$HOME/.local/bin/pitl-askpass}\" 'Unlock the screen'"]
++    stdout: StdioCollector {
++      onStreamFinished: {
++        var value = String(text || "").replace(/\r?\n$/, "")
++        if (value.length > 0 && root.currentlyLocked()) root.submitPassword(value)
++        root.logEvent(value.length > 0 ? "phone-unlock-answered" : "phone-unlock-unanswered")
++      }
++    }
++  }
++
+   Process {
+     id: blankProcess
+     command: ["bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"]
+@@ -887,6 +904,16 @@ Item {
+       return root.currentlyLocked() ? "true" : "false"
+     }
+ 
++    // Ask the user's phone for the password (see phoneUnlockProcess). One
++    // request at a time; the answer is checked like a typed password.
++    function phoneUnlock(): string {
++      if (!root.currentlyLocked()) return "not-locked"
++      if (phoneUnlockProcess.running) return "pending"
++      phoneUnlockProcess.running = true
++      root.logEvent("phone-unlock-requested")
++      return "ok"
++    }
++
+     function status(): string {
+       return JSON.stringify({
+         locked: root.currentlyLocked(),
+-- 
+2.56.1
+
