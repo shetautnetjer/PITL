@@ -84,3 +84,21 @@ while withholding the service token.
 - Protected mode (isolated executor): 0.3.
 - 1Password support.
 - A service file to keep pitld running across reboots.
+
+## 2026-11-17: unlocking the screen from the phone
+
+- `pitl unlock` asks the Omarchy lock screen (`omarchy shell lock phoneUnlock`)
+  to take its password from the phone. The lock runs `pitl-askpass` itself
+  and submits the answer through its own PAM stack
+  (`omarchy-lock-password`, with its faillock count), so the request alone
+  unlocks nothing and PITL never decides.
+- The lock needs `contrib/omarchy/lock-phone-unlock.patch` (27 lines in
+  `shell/plugins/lock/Service.qml`); without it `pitl unlock` says so.
+- Tried live 2026-11-18 (05:46 UTC) on the patched lock: screen locked, `lock
+  phoneUnlock` asked, the request answered from a phone over the tailnet 55 s
+  later; the audit shows `created`, `authorized`, `consumed`, and the lock's
+  own status `unlocked` in the same second. A wrong password and an expired
+  request were not tried.
+- Not done: a request kind of its own, so the
+  phone page says "Unlock the screen" as a verified fact (today it is the
+  askpass prompt, marked unverified); a push to the phone.

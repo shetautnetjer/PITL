@@ -14,6 +14,10 @@ Usage:
                      Ask a human, on their phone, for a secret that pitld
                      writes to ~/.config/pitl/secrets/NAME (0600). This
                      command never receives the value.
+  pitl unlock        Ask the locked screen to take its password from your
+                     phone. The lock screen checks it as if typed; this
+                     command never receives it. Then run `pitl list` for
+                     the link.
   pitl list          Show pending requests and their phone links
   pitl audit [N]     Show the last N audit records (default 20)
   pitl paths         Show the socket and audit log locations
@@ -80,6 +84,34 @@ fn store(name: &str) -> io::Result<bool> {
     }
 }
 
+/// Ask the Omarchy lock screen to request its password through PITL. The
+/// lock runs pitl-askpass itself and checks the answer with its own PAM
+/// stack, so this only starts the question. Exit 0 when a request is out.
+fn unlock() -> io::Result<bool> {
+    let out = std::process::Command::new("omarchy")
+        .args(["shell", "lock", "phoneUnlock"])
+        .output()
+        .map_err(|e| io::Error::new(e.kind(), format!("cannot run `omarchy shell`: {e}")))?;
+    let answer = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    match answer.as_str() {
+        "ok" | "pending" => {
+            println!("asked: the lock screen is waiting for your phone (see `pitl list` for the link)");
+            Ok(true)
+        }
+        "not-locked" => {
+            println!("the screen is not locked");
+            Ok(false)
+        }
+        _ => {
+            println!(
+                "the lock screen did not take the request (it answered {answer:?}): \
+                 this Omarchy shell may not have `lock phoneUnlock` yet"
+            );
+            Ok(false)
+        }
+    }
+}
+
 fn list() -> io::Result<()> {
     let path = pitl_core::paths::socket_path();
     let mut s = UnixStream::connect(&path).map_err(|e| {
@@ -140,6 +172,16 @@ fn main() -> ExitCode {
                 }
             };
             return match store(&name) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
+                Err(e) => {
+                    eprintln!("pitl: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Some("unlock") => {
+            return match unlock() {
                 Ok(true) => ExitCode::SUCCESS,
                 Ok(false) => ExitCode::FAILURE,
                 Err(e) => {
